@@ -5,13 +5,14 @@ import { AbstractGraphQLDriver } from '@nestjs/graphql';
 import {
   ApolloError,
   ApolloServerBase,
-  ApolloServerPluginLandingPageDisabled,
-  ApolloServerPluginLandingPageGraphQLPlayground,
   AuthenticationError,
   ForbiddenError,
   PluginDefinition,
   UserInputError,
 } from 'apollo-server-core';
+import { ApolloServerPluginLandingPageGraphQLPlayground } from '@apollo/server-plugin-landing-page-graphql-playground';
+import { ApolloServerPluginLandingPageDisabled } from '@apollo/server/plugin/disabled';
+import { ApolloServer, ApolloServerOptions, BaseContext } from '@apollo/server';
 import { GraphQLError, GraphQLFormattedError } from 'graphql';
 import * as omit from 'lodash.omit';
 import { ApolloDriverConfig } from '../interfaces';
@@ -26,22 +27,21 @@ const apolloPredefinedExceptions: Partial<
 };
 
 export abstract class ApolloBaseDriver<
-  T extends Record<string, any> = ApolloDriverConfig,
-> extends AbstractGraphQLDriver<T> {
-  protected _apolloServer: ApolloServerBase;
+  TContext extends BaseContext,
+  TOptions extends ApolloDriverConfig<TContext> = ApolloDriverConfig<TContext>,
+> extends AbstractGraphQLDriver<TOptions> {
+  protected _apolloServer: ApolloServer<TContext>;
 
-  get instance(): ApolloServerBase {
+  get instance(): ApolloServer<TContext> {
     return this._apolloServer;
   }
 
-  public async start(apolloOptions: T) {
+  public async start(apolloOptions: TOptions) {
     const httpAdapter = this.httpAdapterHost.httpAdapter;
     const platformName = httpAdapter.getType();
 
-    if (platformName === 'express') {
-      await this.registerExpress(apolloOptions);
-    } else if (platformName === 'fastify') {
-      await this.registerFastify(apolloOptions);
+    if (platformName === 'express' || platformName === 'fastify') {
+      await this.registerServer(apolloOptions);
     } else {
       throw new Error(`No support for current HttpAdapter: ${platformName}`);
     }
@@ -51,11 +51,12 @@ export abstract class ApolloBaseDriver<
     return this._apolloServer?.stop();
   }
 
-  public async mergeDefaultOptions(options: T): Promise<T> {
+  public async mergeDefaultOptions(options: TOptions): Promise<TOptions> {
     let defaults: ApolloDriverConfig = {
       path: '/graphql',
       fieldResolverEnhancers: [],
       stopOnTerminationSignals: false,
+      context: options.context,
     };
 
     if (
@@ -68,9 +69,7 @@ export abstract class ApolloBaseDriver<
       defaults = {
         ...defaults,
         plugins: [
-          ApolloServerPluginLandingPageGraphQLPlayground(
-            playgroundOptions,
-          ) as PluginDefinition,
+          ApolloServerPluginLandingPageGraphQLPlayground(playgroundOptions),
         ],
       };
     } else if (
@@ -80,7 +79,7 @@ export abstract class ApolloBaseDriver<
     ) {
       defaults = {
         ...defaults,
-        plugins: [ApolloServerPluginLandingPageDisabled() as PluginDefinition],
+        plugins: [ApolloServerPluginLandingPageDisabled()],
       };
     }
 
@@ -89,9 +88,9 @@ export abstract class ApolloBaseDriver<
       omit(defaults, 'plugins'),
     );
 
-    (options as ApolloDriverConfig).plugins = (options.plugins || []).concat(
-      defaults.plugins || [],
-    );
+    (options as unknown as ApolloDriverConfig).plugins = (
+      options.plugins || []
+    ).concat(defaults.plugins || []);
 
     this.wrapContextResolver(options);
     this.wrapFormatErrorFn(options);
@@ -122,7 +121,7 @@ export abstract class ApolloBaseDriver<
     const { ApolloServer } = loadPackage(
       'apollo-server-express',
       'GraphQLModule',
-      () => require('apollo-server-express'),
+      () => require('@apollo/server-express'),
     );
     const { disableHealthCheck, path, onHealthCheck, cors, bodyParserConfig } =
       apolloOptions;
@@ -176,6 +175,22 @@ export abstract class ApolloBaseDriver<
       }),
     );
 
+    this._apolloServer = apolloServer;
+  }
+
+  protected async registerServer(
+    apolloOptions: TOptions,
+    { preStartHook }: { preStartHook?: () => void } = {},
+  ) {
+    const httpAdapter = this.httpAdapterHost.httpAdapter;
+    const app = httpAdapter.getInstance();
+
+    preStartHook?.();
+
+    const apolloServer = new ApolloServer(
+      apolloOptions as unknown as ApolloServerOptions<TContext>,
+    );
+    await apolloServer.start();
     this._apolloServer = apolloServer;
   }
 

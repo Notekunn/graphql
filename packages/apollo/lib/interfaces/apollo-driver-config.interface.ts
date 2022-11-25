@@ -4,11 +4,9 @@ import {
   GqlOptionsFactory,
   SubscriptionConfig,
 } from '@nestjs/graphql';
-import {
-  ApolloServerPluginLandingPageGraphQLPlaygroundOptions,
-  Config,
-  GraphQLExecutor,
-} from 'apollo-server-core';
+import { ApolloServerOptions, BaseContext } from '@apollo/server';
+import { GatewayExecutor } from '@apollo/server-gateway-interface';
+import { ApolloServerPluginLandingPageGraphQLPlaygroundOptions } from '@apollo/server-plugin-landing-page-graphql-playground';
 import { GraphQLSchema } from 'graphql';
 
 export interface ServerRegistration {
@@ -38,16 +36,16 @@ export interface ServerRegistration {
   disableHealthCheck?: boolean;
 }
 
-export interface ApolloDriverConfig
-  extends Omit<Config, 'typeDefs'>,
+export interface ApolloDriverConfig<TContext extends BaseContext = BaseContext>
+  extends Omit<ApolloServerOptions<TContext>, 'typeDefs'>,
     ServerRegistration,
-    Omit<GqlModuleOptions, 'context'> {
+    Omit<GqlModuleOptions, 'context' | 'resolvers'> {
   /**
    * Executor factory function
    */
   executorFactory?: (
     schema: GraphQLSchema,
-  ) => GraphQLExecutor | Promise<GraphQLExecutor>;
+  ) => GatewayExecutor | Promise<GatewayExecutor>;
 
   /**
    * If enabled, "subscriptions-transport-ws" will be automatically registered.
@@ -70,7 +68,16 @@ export interface ApolloDriverConfig
    * @default true
    */
   autoTransformHttpErrors?: boolean;
+
+  /**
+   * Context function
+   */
+  context: TContext;
 }
 
-export type ApolloDriverConfigFactory = GqlOptionsFactory<ApolloDriverConfig>;
-export type ApolloDriverAsyncConfig = GqlModuleAsyncOptions<ApolloDriverConfig>;
+export type ApolloDriverConfigFactory<
+  TContext extends BaseContext = BaseContext,
+> = GqlOptionsFactory<ApolloDriverConfig<TContext>>;
+export type ApolloDriverAsyncConfig<
+  TContext extends BaseContext = BaseContext,
+> = GqlModuleAsyncOptions<ApolloDriverConfig<TContext>>;
